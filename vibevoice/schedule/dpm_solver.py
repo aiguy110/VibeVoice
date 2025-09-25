@@ -436,8 +436,19 @@ class DPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
         dtype = sample.dtype
         batch_size, channels, *remaining_dims = sample.shape
 
+        # Try to use native dtype operations, fallback to float32 if needed
+        upcast_needed = False
         if dtype not in (torch.float32, torch.float64):
-            sample = sample.float()  # upcast for quantile calculation, and clamp not implemented for cpu half
+            # Test if current PyTorch version supports f16 operations on this device
+            try:
+                # Try a simple quantile operation to test support
+                test_tensor = torch.randn(10, dtype=dtype, device=sample.device)
+                _ = torch.quantile(test_tensor.abs(), 0.5)
+                # If we get here, f16 operations are supported
+            except (RuntimeError, TypeError):
+                # Fallback to float32 for unsupported operations
+                sample = sample.float()
+                upcast_needed = True
 
         # Flatten sample for doing quantile calculation along each image
         sample = sample.reshape(batch_size, channels * np.prod(remaining_dims))
@@ -452,7 +463,11 @@ class DPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
         sample = torch.clamp(sample, -s, s) / s  # "we threshold xt0 to the range [-s, s] and then divide by s"
 
         sample = sample.reshape(batch_size, channels, *remaining_dims)
-        sample = sample.to(dtype)
+
+        # Convert back to original dtype if we upcast
+        if upcast_needed:
+            sample = sample.to(dtype)
+        # If no upcasting was needed, sample is already in correct dtype
 
         return sample
 
@@ -1042,7 +1057,7 @@ class DPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
             sigma_t = sigma_t.unsqueeze(-1)
         noisy_samples = alpha_t * original_samples + sigma_t * noise
         return noisy_samples
-    
+
     def get_velocity(self, original_samples: torch.Tensor, noise: torch.Tensor, timesteps: torch.IntTensor) -> torch.Tensor:
         # alpha_t = self.alpha_t.to(device=original_samples.device, dtype=original_samples.dtype)
         # sigma_t = self.sigma_t.to(device=original_samples.device, dtype=original_samples.dtype)

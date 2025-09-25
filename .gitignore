@@ -175,3 +175,8 @@ tags
 /checkpoints/
 exp
 .gradio/
+
+# Model weights
+VibeVoice-*-f16
+
+f16_env
